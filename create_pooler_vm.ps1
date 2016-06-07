@@ -130,7 +130,7 @@ if (Test-Path -Path "$($thisDir)\SetupComplete.CMD") {
 Write-Host "Time to build Nano...."
 $IsoPath = $Server2016ISO
 $MaxSize = 1.5GB
-$DiskLayout = "BIOS"
+$DiskLayout = "BIOS" # "UEFI" still seems to have trouble under VMware Fusion.  Needs to be looked at
 $PackageList = @()
 $ServerEdition = 'Standard'
 $NanoServerDir = "$($thisDir)\NanoServer"
