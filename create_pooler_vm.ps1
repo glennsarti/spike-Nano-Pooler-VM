@@ -69,6 +69,52 @@ if (-not (Test-Path -Path $OpenSSHZip)) {
   $url64bit = 'https://github.com/PowerShell/Win32-OpenSSH/releases/download/5_30_2016/OpenSSH-Win64.zip'
   (New-Object System.Net.WebClient).DownloadFile($url64bit, $OpenSSHZip) | Out-Null
 }
+#   Grab the LSI Logic SAS drivers from within the 2016 ISO
+$LSILogicDrivers = "$sourcesDir\LSILogic"
+if (-not (Test-Path -Path $LSILogicDrivers)) {
+  Write-Host "Grabbing the LSI Logic Drivers"
+
+  Write-Host "Mounting the Server 2016 ISO..."
+  $isoMountDrive = (Mount-DiskImage $Server2016ISO -PassThru | Get-Volume).DriveLetter
+  $serverInstallWIM = "${isoMountDrive}:\sources\install.wim"
+  try
+  {
+    $dismPath = "dism.exe"
+
+    $mountDir = "$tmpDir\serverinstallmount"
+    if (Test-Path -Path $mountDir) { Remove-Item -Path $mountDir -Recurse -Confirm:$false -Force | Out-Null }
+    New-Item -Path $mountDir -ItemType Directory | Out-Null
+
+    Write-Host "Mounting the Server 2016 install.wim ..."
+    & $dismPath /Mount-Image /ImageFile:$serverInstallWIM /ReadOnly /Index:1 /MountDir:$mountDir
+    if($lastexitcode) { throw "dism /Mount-Image failed"}
+
+    try
+    {
+      Write-Host "Copying drivers..."
+      New-Item -Path $LSILogicDrivers -ItemType Directory | Out-Null
+
+      Copy-Item -Path "$($mountDir)\Windows\System32\drivers\lsi_sas.sys" -Destination $LSILogicDrivers -Confirm:$false -Force | Out-Null
+      Copy-Item -Path "$($mountDir)\Windows\inf\lsi_sas.inf" -Destination $LSILogicDrivers -Confirm:$false -Force | Out-Null
+    }
+    catch {
+      if (Test-Path -Path $LSILogicDrivers) { Remove-Item -Path $LSILogicDrivers -Force -Confirm:$false | Out-Null }
+      
+      throw $_
+    }
+    finally
+    {
+      Write-Host "Dismounting the Server 2016 install.wim ..."
+      & $dismPath /Unmount-Image /MountDir:$mountDir /Discard
+      if($lastexitcode) { throw "dism /Unmount-Image failed"}
+    }
+  }
+  finally
+  {
+    Write-Host "Disounting the Server 2016 ISO..."
+    Dismount-DiskImage $Server2016ISO
+  }
+}
 
 # Extract the VMWare Tools ISO files...
 Write-Host "Mounting VMWare Tools ISO..."
@@ -98,6 +144,13 @@ Write-Host "Extracting Cloud Base for Nano..."
 $tempCloudBase = "$tmpDir\cloudbase"
 [System.IO.Compression.ZipFile]::ExtractToDirectory($CloudBaseOfflineInitZip, $tempCloudBase)
 
+# Create the extra drivers layout
+Write-Host "Creating Extra Drivers layout..."
+$tempExtraDrivers = "$($tmpDir)\ExtraDrivers"
+New-Item -Path $tempExtraDrivers -ItemType Directory | Out-Null
+Copy-Item -Path $VmwareDriversPath -Destination $tempExtraDrivers -Recurse -Force -Confirm:$false | Out-Null
+Copy-Item -Path $LSILogicDrivers -Destination $tempExtraDrivers -Recurse -Force -Confirm:$false | Out-Null
+
 # Create the extra files layout...
 Write-Host "Creating Extra Files layout..."  
 $ExtraFilesPaths = @{
@@ -105,7 +158,6 @@ $ExtraFilesPaths = @{
   "$sourcesDir\setuser\*" = "OpenSSH-Win64\"
   "$thisDir\Install-OpenSSH.PS1" = "Install-OpenSSH.ps1"
 }
-#  "$thisDir\SetupComplete.CMD" = "Windows\Setup\Scripts\"
 New-Item -Path $tempExtraFiles -ItemType Directory | Out-Null
 $ExtraFilesPaths.GetEnumerator() | % {
   $item = $_
@@ -172,7 +224,7 @@ try
   -Compute:$false -Storage:$true -Clustering:$false -Containers:$false  `
   -Packages $PackageList -Edition $ServerEdition `
   -EnableRemoteManagementPort:$true -CopyFiles (Get-ChildItem -Path $tempExtraFiles | % { Write-Output $_.Fullname }) `
-  -DriversPath $VmwareDriversPath -SetupCompleteCommands $SetupComplete
+  -DriversPath $tempExtraDrivers -SetupCompleteCommands $SetupComplete
 }
 finally
 {
@@ -200,9 +252,6 @@ try
     & $dismPath /Enable-Feature /image:$mountDir /FeatureName:$featureName
     if($lastexitcode) { throw "dism /Enable-Feature failed for feature: $featureName"}
   }
-
-#read-host -Prompt "press enter"
-
 }
 finally
 {
