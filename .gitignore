@@ -1,0 +1,6 @@
+Sources/
+NanoServer/
+temp/
+
+.vscode
+.DS_Store
